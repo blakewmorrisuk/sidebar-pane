@@ -1,0 +1,131 @@
+/* Sidebar, by M. Ink navy on paper white, light mode only for Phase 1. */
+
+:root {
+  --navy: #142a45;
+  --navy-soft: #23456b;
+  --ink: #1b2430;
+  --muted: #5c6875;
+  --line: #d9dee4;
+  --bg: #ffffff;
+  --panel: #f4f6f8;
+  --accent: #38618c;
+  --danger: #8c2f2f;
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  font: 13px/1.45 -apple-system, "Segoe UI", system-ui, sans-serif;
+  color: var(--ink);
+  background: var(--bg);
+  padding: 0 12px 12px;
+}
+
+header {
+  background: var(--navy);
+  color: #fff;
+  margin: 0 -12px 12px;
+  padding: 12px 14px 10px;
+  border-right: 6px solid #fff;
+  box-shadow: inset -8px 0 0 var(--navy-soft);
+}
+header h1 { font-size: 15px; font-weight: 600; letter-spacing: .02em; }
+header .sub { font-size: 11px; opacity: .75; text-transform: uppercase; letter-spacing: .12em; }
+
+section { margin-bottom: 14px; }
+h2 {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: .1em;
+  color: var(--muted);
+  margin-bottom: 6px;
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+}
+
+.slot-row { display: flex; gap: 10px; margin-bottom: 6px; flex-wrap: wrap; }
+.slot-row label { font-size: 12px; color: var(--ink); display: flex; gap: 4px; align-items: center; }
+
+.btn-row { display: flex; gap: 6px; flex-wrap: wrap; }
+button {
+  font: inherit;
+  border: 1px solid var(--line);
+  background: var(--panel);
+  color: var(--ink);
+  border-radius: 4px;
+  padding: 5px 10px;
+  cursor: pointer;
+}
+button:hover { border-color: var(--navy-soft); }
+button:focus-visible { outline: 2px solid var(--navy-soft); outline-offset: 1px; }
+button.attorney { flex: 1; font-weight: 600; white-space: nowrap; }
+button.ghost { color: var(--muted); font-weight: 400; }
+button.link {
+  border: none; background: none; color: var(--navy-soft);
+  text-decoration: underline; padding: 0; font-size: 11px;
+  text-transform: none; letter-spacing: 0;
+}
+
+#def-search, #def-part {
+  width: 100%;
+  font: inherit;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 5px 8px;
+  margin-bottom: 6px;
+  background: #fff;
+  color: var(--ink);
+}
+
+.scroll-list {
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  max-height: 300px;
+  overflow-y: auto;
+  background: #fff;
+}
+.scroll-list.short { max-height: 180px; }
+.scroll-list:empty::after {
+  content: attr(data-empty);
+  display: block;
+  padding: 10px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.mod { border-bottom: 1px solid var(--line); padding: 6px 8px; }
+.mod:last-child { border-bottom: none; }
+.mod-head { display: flex; justify-content: space-between; gap: 6px; align-items: baseline; }
+.mod-label { cursor: pointer; flex: 1; }
+.mod-label:hover { color: var(--navy-soft); }
+.chip {
+  display: inline-block;
+  font-size: 10px;
+  border: 1px solid var(--accent);
+  color: var(--accent);
+  border-radius: 3px;
+  padding: 0 4px;
+  margin-left: 4px;
+  white-space: nowrap;
+}
+.mod-preview { font-size: 11px; color: var(--muted); margin-top: 4px; }
+.mod-note { font-size: 11px; color: var(--accent); margin-top: 2px; }
+.mod button { padding: 2px 9px; font-size: 12px; }
+
+.cur { border-bottom: 1px solid var(--line); padding: 6px 8px; }
+.cur:last-child { border-bottom: none; }
+.cur-head { display: flex; justify-content: space-between; gap: 6px; align-items: baseline; }
+.cur-ord { font-weight: 600; font-size: 11px; letter-spacing: .03em; }
+.cur-snip { font-size: 11px; color: var(--muted); margin-top: 2px; }
+.cur button.remove { color: var(--danger); border-color: var(--danger); padding: 1px 8px; font-size: 11px; }
+.confirm { background: #fbf3f3; border: 1px solid var(--danger); border-radius: 4px; padding: 6px 8px; margin-top: 5px; font-size: 11px; }
+.confirm .btn-row { margin-top: 5px; }
+.confirm button.yes { background: var(--danger); border-color: var(--danger); color: #fff; }
+
+footer { border-top: 2px solid var(--navy); padding-top: 10px; }
+#btn-finalize { width: 100%; background: var(--navy); color: #fff; border-color: var(--navy); font-weight: 600; }
+#btn-finalize:hover { background: var(--navy-soft); }
+#status { margin-top: 8px; font-size: 12px; color: var(--muted); min-height: 1.4em; white-space: pre-line; }
+#status.ok { color: #2e5e34; }
+#status.err { color: var(--danger); }
