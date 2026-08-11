@@ -129,3 +129,31 @@ footer { border-top: 2px solid var(--navy); padding-top: 10px; }
 #status { margin-top: 8px; font-size: 12px; color: var(--muted); min-height: 1.4em; white-space: pre-line; }
 #status.ok { color: #2e5e34; }
 #status.err { color: var(--danger); }
+
+/* Diagnostics: a quiet drawer under the footer for the Phase 2 storage
+   spike and the control census. Collapsed by default; nothing shouts. */
+#diag { margin-top: 12px; }
+#diag summary {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: .1em;
+  color: var(--muted);
+  cursor: pointer;
+}
+#diag summary:hover { color: var(--navy-soft); }
+#diag .btn-row { margin-top: 8px; }
+#diag .btn-row button { font-size: 12px; padding: 3px 9px; }
+#diag-out {
+  font: 11px/1.5 ui-monospace, Menlo, Consolas, "Courier New", monospace;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: var(--panel);
+  color: var(--ink);
+  max-height: 200px;
+  overflow: auto;
+  padding: 8px;
+  margin-top: 8px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+#diag-out:empty { display: none; }

@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Sidebar</title>
   <script src="https://appsforoffice.microsoft.com/lib/1/hosted/office.js"></script>
-  <link rel="stylesheet" href="app.css">
+  <link rel="stylesheet" href="app.css?v=3">
 </head>
 <body>
   <header>
@@ -38,6 +38,16 @@
     <p id="status" role="status"></p>
   </footer>
 
-  <script src="app.js"></script>
+  <details id="diag">
+    <summary>Diagnostics</summary>
+    <div class="btn-row">
+      <button id="btn-spike">Run storage spike</button>
+      <button id="btn-census">Control census</button>
+      <button id="btn-diag-copy">Copy results</button>
+    </div>
+    <pre id="diag-out"></pre>
+  </details>
+
+  <script src="app.js?v=3"></script>
 </body>
 </html>

@@ -39,6 +39,18 @@ function slotLabel(tag) {
   return bare.charAt(0).toUpperCase() + bare.slice(1);
 }
 
+/* Short labels keep the post-switch telemetry line readable in a narrow
+ * pane: "Sig ✓ control kept · Cert ✓ layout". */
+const SLOT_SHORT = {
+  "SB-SIG": "Sig",
+  "SB-CERT": "Cert",
+  "SB-CAPTION": "Caption",
+};
+
+function slotShort(tag) {
+  return SLOT_SHORT[tag] || slotLabel(tag);
+}
+
 const $ = (id) => document.getElementById(id);
 
 const ONES = ["", "FIRST", "SECOND", "THIRD", "FOURTH", "FIFTH", "SIXTH",
@@ -193,12 +205,22 @@ async function switchAttorney(who) {
   const frags = att.frags || {};
   const slots = SLOT_ORDER.map((tag) =>
     [tag, $("slot-" + tag), slotLabel(tag)]);
+  // Followup 6 telemetry: one record per slot saying which mechanism ran
+  // ("control", "layout", "missing") and, for the control path, whether
+  // the SB- control survived its own replace. Windows lost controls after
+  // control-first swaps while Mac kept them; this pins which path ran.
+  const swaps = [];
   try {
     await Word.run(async (ctx) => {
       const lines = [];
       for (const [tag, box, label] of slots) {
-        if (!box || !box.checked) continue;
+        if (!box || !box.checked) {
+          swaps.push({ slot: tag, mech: "missing", note: "slot unchecked" });
+          continue;
+        }
         if (!frags[tag]) {
+          swaps.push({ slot: tag, mech: "missing",
+                       note: "attorney has no frag" });
           lines.push(label + ": " + att.display + " has no " +
                      label.toLowerCase() + " block");
           continue;
@@ -209,7 +231,12 @@ async function switchAttorney(who) {
         if (cc) {
           cc.insertOoxml(frags[tag], Word.InsertLocation.replace);
           await ctx.sync();
-          lines.push(label + " ✓");
+          // re-query immediately: did the control survive the replace?
+          const still = await findControl(ctx, tag);
+          const survived = !!still;
+          swaps.push({ slot: tag, mech: "control", survived: survived });
+          lines.push(slotShort(tag) + " ✓ control " +
+                     (survived ? "kept" : "lost"));
           continue;
         }
         // fallback: formatting fingerprint. One slot per pass, paragraphs
@@ -217,6 +244,7 @@ async function switchAttorney(who) {
         const items = await loadParagraphs(ctx);
         const run = SLOT_FINDERS[tag] ? SLOT_FINDERS[tag](items) : null;
         if (!run) {
+          swaps.push({ slot: tag, mech: "layout", found: false });
           lines.push(label + ": block not found in this document");
           continue;
         }
@@ -224,9 +252,12 @@ async function switchAttorney(who) {
           .expandTo(items[run[1] - 1].getRange());
         range.insertOoxml(frags[tag], Word.InsertLocation.replace);
         await ctx.sync();
-        lines.push(label + " ✓ (found by layout, no tagged slot)");
+        swaps.push({ slot: tag, mech: "layout", found: true });
+        lines.push(slotShort(tag) + " ✓ layout");
       }
-      setStatus(lines.length ? att.display + ":  " + lines.join("  ·  ")
+      console.log("[sidebar] swap telemetry",
+        JSON.stringify({ attorney: att.display, swaps: swaps }));
+      setStatus(lines.length ? att.display + ": " + lines.join(" · ")
                              : "No slots checked.", "ok");
     });
   } catch (e) { fail(e); }
@@ -477,9 +508,289 @@ function renderAttorneys() {
   }
 }
 
+/* ------------------------------------------------------------ diagnostics */
+
+/* Storage spike (feeds ADR-001 on firm-library storage): can a pack-sized
+ * blob live in this webview's storage, and does it survive a Word restart?
+ * The ritual: run once today (first run on this machine), close Word, run
+ * again (SURVIVED), run again tomorrow. Nothing here clears the stored
+ * record; the survival check depends on it staying put.
+ */
+
+let DIAG_LAST = null;   // latest results object; the Copy button copies this
+
+function diagLines(res) {
+  if (res.kind === "control-census") {
+    const head = res.error
+      ? ["census failed: " + res.error]
+      : [res.count + " content control" + (res.count === 1 ? "" : "s") +
+         " visible to the API"];
+    return head.concat((res.controls || []).map(
+      (c) => "  " + c.tag + " · " + c.title));
+  }
+  return (res.rows || []).map(
+    (r) => (r.ok ? "✓ " : "✗ ") + r.name + ": " + r.detail);
+}
+
+function renderDiag(res) {
+  DIAG_LAST = res;
+  $("diag-out").textContent =
+    diagLines(res).join("\n") + "\n\n" + JSON.stringify(res);
+}
+
+/* FNV-1a over every 1024th byte: cheap integrity check for the 10 MB
+ * record, deterministic across runs and platforms. */
+function fnvSample(bytes) {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < bytes.length; i += 1024) {
+    h = Math.imul(h ^ bytes[i], 0x01000193) >>> 0;
+  }
+  return ("0000000" + h.toString(16)).slice(-8);
+}
+
+function idbOpen() {
+  return new Promise((resolve, reject) => {
+    if (typeof indexedDB === "undefined") {
+      reject(new Error("indexedDB unsupported"));
+      return;
+    }
+    const req = indexedDB.open("sidebar-spike", 1);
+    req.onupgradeneeded = () => {
+      if (!req.result.objectStoreNames.contains("packs")) {
+        req.result.createObjectStore("packs", { keyPath: "id" });
+      }
+    };
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error || new Error("indexedDB open failed"));
+    req.onblocked = () => reject(new Error("indexedDB open blocked"));
+  });
+}
+
+function idbGet(db, key) {
+  return new Promise((resolve, reject) => {
+    const rq = db.transaction("packs", "readonly").objectStore("packs")
+      .get(key);
+    rq.onsuccess = () => resolve(rq.result || null);
+    rq.onerror = () => reject(rq.error || new Error("indexedDB get failed"));
+  });
+}
+
+function idbPut(db, val) {
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction("packs", "readwrite");
+    tx.objectStore("packs").put(val);
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error || new Error("indexedDB put failed"));
+    tx.onabort = () => reject(tx.error || new Error("indexedDB put aborted"));
+  });
+}
+
+async function runSpike() {
+  if (runSpike.busy) return;
+  runSpike.busy = true;
+  const res = { when: new Date().toISOString(), kind: "storage-spike",
+                rows: [] };
+  const push = (name, ok, detail) => {
+    res.rows.push({ name: name, ok: !!ok, detail: String(detail) });
+    renderDiag(res);   // progressive render; the 10 MB step takes a moment
+  };
+  const nowMs = () => (typeof performance !== "undefined" && performance.now)
+    ? performance.now() : Date.now();
+  let platform = "unknown";
+  let persistedNow = "unsupported";
+  let survival = "no verdict";
+  try {
+    // 1. env
+    try {
+      const oc = (typeof Office !== "undefined" && Office.context)
+        ? Office.context : null;
+      if (oc && oc.platform) platform = String(oc.platform);
+      const bits = ["platform=" + platform];
+      if (oc && oc.diagnostics) {
+        bits.push("host=" + oc.diagnostics.host + " " +
+                  oc.diagnostics.version);
+      }
+      bits.push("ua=" + String(navigator.userAgent || "").slice(0, 80));
+      bits.push("partitionKey " +
+        (oc && typeof oc.partitionKey !== "undefined"
+          ? "defined" : "not defined"));
+      push("env", true, bits.join(" | "));
+    } catch (e) { push("env", false, e.message || String(e)); }
+
+    // 2. persisted
+    try {
+      if (navigator.storage && navigator.storage.persisted) {
+        const was = await navigator.storage.persisted();
+        const got = navigator.storage.persist
+          ? await navigator.storage.persist() : "unsupported";
+        persistedNow = String(got);
+        push("persisted", true, "persisted()=" + was + " persist()=" + got);
+      } else {
+        push("persisted", false, "navigator.storage.persisted unsupported");
+      }
+    } catch (e) { push("persisted", false, e.message || String(e)); }
+
+    // 3. estimate
+    try {
+      if (navigator.storage && navigator.storage.estimate) {
+        const est = await navigator.storage.estimate();
+        const mb = (n) => ((n || 0) / 1048576).toFixed(1) + " MB";
+        push("estimate", true,
+             "usage=" + mb(est.usage) + " quota=" + mb(est.quota));
+      } else {
+        push("estimate", false, "navigator.storage.estimate unsupported");
+      }
+    } catch (e) { push("estimate", false, e.message || String(e)); }
+
+    // 4. localStorage; the 100 KB payload stays behind as a survival marker
+    try {
+      const prior = localStorage.getItem("sb-spike-ls-ts");
+      const payload = "S".repeat(102400);
+      localStorage.setItem("sb-spike-ls", payload);
+      const back = localStorage.getItem("sb-spike-ls") || "";
+      const ok = back.length === payload.length;
+      localStorage.setItem("sb-spike-ls-ts", new Date().toISOString());
+      push("localStorage", ok, "100 KB roundtrip " +
+        (ok ? "ok" : "length mismatch (" + back.length + ")") +
+        (prior ? " · marker survived from " + prior
+               : " · first marker written"));
+    } catch (e) { push("localStorage", false, e.message || String(e)); }
+
+    // 5. IndexedDB survival check FIRST, before this run's write
+    let db = null;
+    try {
+      db = await idbOpen();
+      const rec = await idbGet(db, "pack-sim");
+      if (!rec) {
+        survival = "first run on this machine";
+        push("idb-survival", true, survival);
+      } else if (rec.data && fnvSample(rec.data) === rec.checksum) {
+        survival = "SURVIVED from " + rec.ts + ", 10 MB intact";
+        push("idb-survival", true, survival);
+      } else {
+        survival = "corrupt";
+        push("idb-survival", false,
+             "record present but corrupt (stored " + rec.checksum + ")");
+      }
+    } catch (e) {
+      survival = "indexedDB unavailable";
+      push("idb-survival", false, e.message || String(e));
+    }
+
+    // 6. IndexedDB write: 10 MB deterministic pattern, checksum, roundtrip
+    try {
+      if (!db) db = await idbOpen();
+      const data = new Uint8Array(10 * 1024 * 1024);
+      for (let i = 0; i < data.length; i++) data[i] = (i ^ (i >> 8)) & 0xff;
+      const checksum = fnvSample(data);
+      const t0 = nowMs();
+      await idbPut(db, { id: "pack-sim", ts: new Date().toISOString(),
+                         checksum: checksum, data: data });
+      const writeMs = Math.round(nowMs() - t0);
+      const t1 = nowMs();
+      const back = await idbGet(db, "pack-sim");
+      const readMs = Math.round(nowMs() - t1);
+      const ok = !!(back && back.data && fnvSample(back.data) === checksum);
+      push("idb-write", ok, "10 MB write " + writeMs + " ms · readback " +
+        readMs + " ms · checksum " +
+        (ok ? "verified (" + checksum + ")" : "MISMATCH"));
+    } catch (e) { push("idb-write", false, e.message || String(e)); }
+    if (db) { try { db.close(); } catch (e) { /* already closed */ } }
+
+    // 7. document settings through the common API
+    try {
+      const st = (typeof Office !== "undefined" && Office.context &&
+                  Office.context.document &&
+                  Office.context.document.settings)
+        ? Office.context.document.settings : null;
+      if (!st) {
+        push("settings", false, "document settings unavailable");
+      } else {
+        const iso = new Date().toISOString();
+        st.set("sb-spike", iso);
+        await new Promise((resolve, reject) => {
+          st.saveAsync((r) => {
+            if (r.status === Office.AsyncResultStatus.Succeeded) resolve();
+            else reject(new Error((r.error && r.error.message) ||
+                                  "saveAsync failed"));
+          });
+        });
+        const got = st.get("sb-spike");
+        push("settings", got === iso, "set + saveAsync + get " +
+          (got === iso ? "roundtripped (" + got + ")"
+                       : "MISMATCH (" + got + ")"));
+      }
+    } catch (e) { push("settings", false, e.message || String(e)); }
+
+    // 8. the line ADR-001 will quote
+    push("summary", true, "platform=" + platform + " · " + survival +
+         " · persisted=" + persistedNow);
+  } finally {
+    runSpike.busy = false;
+  }
+}
+
+/* Control census: every content control the API can see, tag and title,
+ * so a click-test can read the document's control state at any moment. */
+async function runCensus() {
+  const res = { when: new Date().toISOString(), kind: "control-census",
+                count: 0, controls: [] };
+  try {
+    await Word.run(async (ctx) => {
+      const ccs = ctx.document.contentControls;
+      ccs.load("items/tag,items/title");
+      await ctx.sync();
+      res.count = ccs.items.length;
+      res.controls = ccs.items.map((c) => ({
+        tag: c.tag || "(no tag)",
+        title: c.title || "untitled",
+      }));
+    });
+  } catch (e) {
+    res.error = e.message || String(e);
+  }
+  renderDiag(res);
+}
+
+async function copyDiag() {
+  const btn = $("btn-diag-copy");
+  const flash = (msg) => {
+    btn.textContent = msg;
+    setTimeout(() => { btn.textContent = "Copy results"; }, 1400);
+  };
+  if (!DIAG_LAST) { flash("Nothing yet"); return; }
+  const text = JSON.stringify(DIAG_LAST);
+  try {
+    if (!(navigator.clipboard && navigator.clipboard.writeText)) {
+      throw new Error("no async clipboard");
+    }
+    await navigator.clipboard.writeText(text);
+    flash("Copied ✓");
+  } catch (e) {
+    // hidden-textarea fallback for webviews without the async clipboard
+    const ta = document.createElement("textarea");
+    ta.value = text;
+    ta.setAttribute("readonly", "");
+    ta.style.position = "fixed";
+    ta.style.top = "-1000px";
+    document.body.appendChild(ta);
+    ta.focus();
+    ta.select();
+    let ok = false;
+    try { ok = document.execCommand("copy"); } catch (e2) { ok = false; }
+    ta.remove();
+    flash(ok ? "Copied ✓" : "Copy failed");
+  }
+}
+
 /* ----------------------------------------------------------------- boot */
 
 Office.onReady(async (info) => {
+  // diagnostics first: the drawer must work even when the pack data or
+  // the host check fails, so the spike can run anywhere the pane loads
+  $("btn-spike").addEventListener("click", runSpike);
+  $("btn-census").addEventListener("click", runCensus);
+  $("btn-diag-copy").addEventListener("click", copyDiag);
   if (info.host !== Office.HostType.Word) {
     setStatus("Sidebar only works inside Word.", "err");
     return;
